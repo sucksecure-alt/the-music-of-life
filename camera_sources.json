@@ -1,75 +1,32 @@
 {
-  "manifest": "THEY DO NOT KNOW THEY ARE PLAYING",
-  "version": "1.0.0",
+  "manifest": "ОНИ НЕ ЗНАЮТ, ЧТО ИГРАЮТ",
+  "version": "1.1.0",
   "cameras": [
-    {
-      "id": "tokyo_shibuya",
-      "city": "Tokyo",
-      "name": "Shibuya Crossing",
-      "url": "https://www.youtube.com/watch?v=kV2cCqkGwL4",
-      "type": "youtube_hls",
-      "country": "JP",
-      "timezone": "Asia/Tokyo"
-    },
-    {
-      "id": "nyc_times_square",
-      "city": "New York",
-      "name": "Times Square",
-      "url": "https://www.youtube.com/watch?v=rnXIjl_Rzy4",
-      "type": "youtube_hls",
-      "country": "US",
-      "timezone": "America/New_York"
-    },
-    {
-      "id": "london_piccadilly",
-      "city": "London",
-      "name": "Piccadilly Circus",
-      "url": "https://www.youtube.com/watch?v=4nMzOF3d9pw",
-      "type": "youtube_hls",
-      "country": "GB",
-      "timezone": "Europe/London"
-    },
-    {
-      "id": "venice_rialto",
-      "city": "Venice",
-      "name": "Rialto Bridge",
-      "url": "https://www.youtube.com/watch?v=FqKGmBi7mLw",
-      "type": "youtube_hls",
-      "country": "IT",
-      "timezone": "Europe/Rome"
-    },
-    {
-      "id": "moscow_tverskaya",
-      "city": "Moscow",
-      "name": "Tverskaya Street",
-      "url": "https://www.youtube.com/watch?v=YOUR_STREAM_ID",
-      "type": "youtube_hls",
-      "country": "RU",
-      "timezone": "Europe/Moscow"
-    },
-    {
-      "id": "open_mjpeg_1",
-      "city": "Unknown",
-      "name": "Node 0x1F",
-      "url": "http://86.119.172.9:8080/mjpg/video.mjpg",
-      "type": "mjpeg",
-      "country": "??",
-      "timezone": "UTC"
-    },
-    {
-      "id": "open_mjpeg_2",
-      "city": "Unknown",
-      "name": "Node 0x2A",
-      "url": "http://155.4.149.130:8080/mjpg/video.mjpg",
-      "type": "mjpeg",
-      "country": "??",
-      "timezone": "UTC"
-    }
-  ],
-  "discovery": {
-    "windy_api": "https://www.windy.com/webcams/api/v1.1/webcams?limit=50&offset=0&include=images",
-    "skyline": "https://www.skylinewebcams.com/en/webcam/{country}.html",
-    "shodan_query": "port:80,554,8080 has_screenshot:true -authentication",
-    "note": "ADD ONLY PUBLICLY BROADCASTING CAMERAS. NO AUTH BYPASS."
-  }
+    {"id":"de_pendel","city":"Хайдельберг","name":"Маятник Фуко","url":"http://pendelcam.kip.uni-heidelberg.de/mjpg/video.mjpg","country":"DE","description":"публичная камера · лаборатория физики · Германия"},
+    {"id":"jp_piano","city":"Осака","name":"Фабрика пианино","url":"http://takemotopiano.aa1.netvolante.jp:8190/nphMotionJpeg?Resolution=640x480&Quality=Standard&Framerate=30","country":"JP","description":"публичная камера · цех фабрики · Япония"},
+    {"id":"jp_village","city":"Цумаго","name":"Деревня","url":"http://honjin1.miemasu.net/nphMotionJpeg?Resolution=640x480&Quality=Standard","country":"JP","description":"публичная камера · историческая деревня · Япония"},
+    {"id":"us_purdue","city":"Индиана","name":"Purdue, аллея","url":"http://webcam01.ecn.purdue.edu/mjpg/video.mjpg","country":"US","description":"публичная камера · студенческая аллея · США"},
+    {"id":"us_bourbon","city":"Кентукки","name":"Виски-баррели","url":"http://camera.buffalotrace.com/mjpg/video.mjpg","country":"US","description":"публичная камера · винокурня · США"},
+    {"id":"fi_hack","city":"Тампере","name":"Хаклаб","url":"http://tamperehacklab.tunk.org:38001/nphMotionJpeg?Resolution=640x480&Quality=Clarity","country":"FI","description":"публичная камера · хакерская мастерская · Финляндия"},
+    {"id":"us_hosp","city":"Сан-Бернардино","name":"Больница","url":"http://webcam.mchcares.com/mjpg/video.mjpg","country":"US","description":"публичная камера · вход больницы · США"},
+    {"id":"se_sq","city":"Паяла","name":"Площадь","url":"http://195.196.36.242/mjpg/video.mjpg","country":"SE","description":"публичная камера · площадь · Швеция"},
+    {"id":"no_ski","city":"Кайскуру","name":"Лыжная станция","url":"http://77.222.181.11:8080/mjpg/video.mjpg","country":"NO","description":"публичная камера · лыжная станция · Норвегия"},
+    {"id":"at_square","city":"Инсбрук","name":"Городская площадь","url":"https://webcam.sparkassenplatz.info/cgi-bin/faststream.jpg?stream=full&fps=25","country":"AT","description":"публичная камера · городская площадь · Австрия"},
+    {"id":"nl_beach","city":"Нордвейк","name":"Пляж","url":"http://webcam.zvnoordwijk.nl:82/mjpg/video.mjpg","country":"NL","description":"публичная камера · пляж · Нидерланды"},
+    {"id":"cz_mikulov","city":"Микулов","name":"Бассейн","url":"http://kamera.mikulov.cz:8888/mjpg/video.mjpg","country":"CZ","description":"публичная камера · бассейн · Чехия"},
+    {"id":"cz_pool","city":"Велке-Опатовице","name":"Купальня","url":"http://koupaliste.velkeopatovice.cz/mjpg/video.mjpg","country":"CZ","description":"публичная камера · открытый бассейн · Чехия"},
+    {"id":"de_anklam","city":"Анклам","name":"Площадь","url":"http://webcam.anklam.de/axis-cgi/mjpg/video.cgi","country":"DE","description":"публичная камера · городская площадь · Германия"},
+    {"id":"us_campus","city":"Мэриленд","name":"Кампус университета","url":"http://cam-mckeldin-eastview.umd.edu/axis-cgi/mjpg/video.cgi","country":"US","description":"публичная камера · университетский кампус · США"},
+    {"id":"de_golf","city":"Падерборн","name":"Мини-гольф","url":"http://minigolf-paderborn.spdns.de:86/axis-cgi/mjpg/video.cgi","country":"DE","description":"публичная камера · площадка мини-гольфа · Германия"},
+    {"id":"us_pier","city":"Фэр-Хоуп","name":"Пирс","url":"http://piercam.cofairhope.com/mjpg/video.mjpg","country":"US","description":"публичная камера · пирс · США"},
+    {"id":"us_marina","city":"Фэр-Харбор","name":"Пристань","url":"http://webcam.fairharbormarina.com/nphMotionJpeg?Resolution=640x480","country":"US","description":"публичная камера · пристань · США"},
+    {"id":"jp_fish","city":"Якумо","name":"Рыбацкий пирс","url":"http://yakumo-fishing-circle.aa0.netvolante.jp/nphMotionJpeg?Resolution=640x480","country":"JP","description":"публичная камера · рыбацкий пирс · Япония"},
+    {"id":"us_park","city":"Хило","name":"Парк","url":"http://67.53.46.161:65123/mjpg/video.mjpg","country":"US","description":"публичная камера · парк · Гавайи, США"},
+    {"id":"nl_ship","city":"Нидерланды","name":"Пристань лоцманов","url":"https://webcamrm.loodswezen.nl/cgi-bin/faststream.jpg?stream=full&fps=25","country":"NL","description":"публичная камера · пристань · Нидерланды"},
+    {"id":"us_coast","city":"Уоррентон","name":"Побережье","url":"http://47.51.131.147/-wvhttp-01-/GetOneShot?image_size=640x480&frame_count=1000000000","country":"US","description":"публичная камера · побережье · Орегон, США"},
+    {"id":"jp_street","city":"Токио","name":"Улица","url":"http://61.211.241.239/nphMotionJpeg?Resolution=640x480","country":"JP","description":"публичная камера · улица · Япония"},
+    {"id":"jp_house","city":"Токио","name":"Жилой квартал","url":"http://210.148.114.53/-wvhttp-01-/GetOneShot?image_size=640x480&frame_count=1000000000","country":"JP","description":"публичная камера · жилой квартал · Япония"},
+    {"id":"ch_alps","city":"Альпы","name":"Взгляд на запад","url":"http://clausenrc5.viewnetcam.com:50003/nphMotionJpeg?Resolution=320x240","country":"CH","description":"публичная камера · Альпы · Швейцария"},
+    {"id":"de_rhein","city":"Райн-Таунус","name":"Долина","url":"http://webcam.rhein-taunus-krematorium.de/mjpg/video.mjpg","country":"DE","description":"публичная камера · долина · Германия"}
+  ]
 }

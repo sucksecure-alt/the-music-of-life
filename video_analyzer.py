@@ -1,81 +1,77 @@
-"""
-video_analyzer.py
-Превращает чужую жизнь в числа.
-Движение. Свет. Цвет. Резкость бытия.
-"""
+"""Глаз Паноптикума. Сглаженный анализ кадра для стабильной музыки."""
 
 import cv2
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
 class FrameData:
-    """Данные одного кадра чужой жизни."""
-    brightness: float = 0.0        # 0.0 (тьма) — 1.0 (свет)
-    movement: float = 0.0          # 0.0 (покой) — 1.0 (хаос)
-    dominant_color: str = "neutral" # red/green/blue/neutral
-    color_values: tuple = (0, 0, 0) # BGR средние
-    sudden_change: bool = False     # резкий скачок
-    complexity: float = 0.0        # визуальная сложность сцены
+    brightness: float = 0.0
+    movement: float = 0.0
+    dominant_color: str = "neutral"
+    color_rgb: tuple = (0.0, 0.0, 0.0)
+    sudden_change: bool = False
+    complexity: float = 0.0
     is_night: bool = False
+    stillness_duration: float = 0.0
 
 
 class VideoAnalyzer:
-    """Извлекает музыкальные параметры из видеопотока."""
-
     def __init__(self):
         self.prev_gray = None
-        self.movement_history: list[float] = []
-        self.brightness_history: list[float] = []
+        self.movement_history = []
+        self.stillness_counter = 0
+        self._ema = 0.0
 
-    def analyze(self, frame: np.ndarray) -> FrameData:
-        """Анализ одного кадра → FrameData."""
+    def analyze(self, frame):
         data = FrameData()
+        try:
+            if frame is None or frame.size == 0:
+                return data
+            small = cv2.resize(frame, (320, 240))
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-        # Перевод в ч/б для анализа
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            data.brightness = float(np.mean(gray)) / 255.0
+            data.is_night = data.brightness < 0.30
 
-        # ── Яркость → тональность (день/ночь) ──
-        data.brightness = float(np.mean(gray)) / 255.0
-        data.is_night = data.brightness < 0.35
+            raw = 0.0
+            if self.prev_gray is not None:
+                diff = cv2.absdiff(self.prev_gray, gray)
+                raw = min(float(np.mean(diff)) / 40.0, 1.0)
+            self.prev_gray = gray.copy()
+            self._ema = 0.7 * self._ema + 0.3 * raw
+            data.movement = self._ema
 
-        # ── Движение → ритм и интенсивность ──
-        if self.prev_gray is not None:
-            diff = cv2.absdiff(self.prev_gray, gray)
-            data.movement = float(np.mean(diff)) / 255.0
-        else:
-            data.movement = 0.0
-        self.prev_gray = gray.copy()
+            self.movement_history.append(raw)
+            if len(self.movement_history) > 30:
+                self.movement_history.pop(0)
+            avg = np.mean(self.movement_history) if self.movement_history else 0
+            data.sudden_change = raw > max(avg * 3.0, 0.15)
 
-        # ── Резкие изменения → акценты ──
-        self.movement_history.append(data.movement)
-        if len(self.movement_history) > 10:
-            self.movement_history.pop(0)
-        avg_movement = np.mean(self.movement_history) if self.movement_history else 0
-        data.sudden_change = data.movement > avg_movement * 2.5 and data.movement > 0.08
+            if data.movement < 0.02:
+                self.stillness_counter += 1
+            else:
+                self.stillness_counter = 0
+            data.stillness_duration = min(self.stillness_counter / 30.0, 10.0)
 
-        # ── Доминантный цвет → гамма ──
-        avg_b, avg_g, avg_r = frame.mean(axis=(0, 1))
-        data.color_values = (avg_b, avg_g, avg_r)
-        r, g, b = avg_r / 255.0, avg_g / 255.0, avg_b / 255.0
+            ac = small.mean(axis=(0, 1))
+            b, g, r = ac / 255.0
+            data.color_rgb = (r, g, b)
+            w = r - b
+            if w > 0.08 and r > 0.3: data.dominant_color = "warm"
+            elif w < -0.08 and b > 0.3: data.dominant_color = "cool"
+            elif g > r and g > b and g > 0.3: data.dominant_color = "nature"
+            else: data.dominant_color = "neutral"
 
-        if r > g and r > b and r > 0.3:
-            data.dominant_color = "red"       # → фригийский лад
-        elif g > r and g > b and g > 0.3:
-            data.dominant_color = "green"     # → дорийский лад
-        elif b > r and b > g and b > 0.3:
-            data.dominant_color = "blue"      # → лидийский лад
-        else:
-            data.dominant_color = "neutral"   # → ионийский лад
-
-        # ── Сложность сцены → количество слоёв ──
-        edges = cv2.Canny(gray, 50, 150)
-        data.complexity = float(np.sum(edges > 0)) / (frame.shape[0] * frame.shape[1])
-
+            edges = cv2.Canny(gray, 30, 120)
+            data.complexity = min(float(np.sum(edges > 0)) / (320*240) * 5.0, 1.0)
+        except Exception as e:
+            print("analyze error:", e)
         return data
 
     def reset(self):
         self.prev_gray = None
         self.movement_history.clear()
-        self.brightness_history.clear()
+        self.stillness_counter = 0
+        self._ema = 0.0

@@ -1,0 +1,11 @@
+Sat Sep  5 04:39:38 2026 open: http://pendelcam.kip.uni-heidelberg.de/mjpg/video.mjpg <urlopen error timed out>
+Sat Sep  5 04:39:43 2026 open: http://pendelcam.kip.uni-heidelberg.de/mjpg/video.mjpg <urlopen error timed out>
+Sat Sep  5 04:39:49 2026 open: http://takemotopiano.aa1.netvolante.jp:8190/nphMotionJpeg?Resolution=640x480&Quality=Standard&Framerate=30 <urlopen error timed out>
+Sat Sep  5 04:41:00 2026 open: http://kamera.mikulov.cz:8888/mjpg/video.mjpg <urlopen error [Errno 8] nodename nor servname provided, or not known>
+Sat Sep  5 04:41:02 2026 open: http://kamera.mikulov.cz:8888/mjpg/video.mjpg <urlopen error [Errno 8] nodename nor servname provided, or not known>
+Sat Sep  5 04:41:11 2026 open: http://webcam.anklam.de/axis-cgi/mjpg/video.cgi <urlopen error timed out>
+Sat Sep  5 04:41:17 2026 open: http://webcam.anklam.de/axis-cgi/mjpg/video.cgi <urlopen error timed out>
+Sat Sep  5 04:41:39 2026 open: http://webcam.anklam.de/axis-cgi/mjpg/video.cgi <urlopen error timed out>
+Sat Sep  5 04:45:04 2026 open: http://pendelcam.kip.uni-heidelberg.de/mjpg/video.mjpg <urlopen error timed out>
+Sat Sep  5 04:45:08 2026 open: http://takemotopiano.aa1.netvolante.jp:8190/nphMotionJpeg?Resolution=640x480&Quality=Standard&Framerate=30 <urlopen error timed out>
+Sat Sep  5 04:45:13 2026 open: http://webcam01.ecn.purdue.edu/mjpg/video.mjpg <urlopen error timed out>

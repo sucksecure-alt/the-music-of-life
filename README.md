@@ -1,21 +1,26 @@
-# ◉ PANOPTICON SYMPHONY
+# PANOPTICON SYMPHONY v1.0
 
-> *They do not know they are playing.*
+Генеративный эмбиент, который в реальном времени сочиняется из публичных
+видеопотоков: движение людей становится ритмом, свет — тональностью,
+цвет — ладом, резкие события — перкуссией.
 
----
+## Запуск
 
-## What is this?
+Python (macOS / Windows / Linux):
+    pip install -r requirements.txt
+    python3 main.py
 
-Somewhere in Tokyo, a woman crosses the street.
-In New York, a taxi turns left.
-In Venice, the water moves under a bridge.
+Windows EXE: build_exe.bat
+Linux:       chmod +x build_linux.sh && ./build_linux.sh
 
-They do not know that their movements are notes.
-They do not know that their sunset is a chord.
-They do not know that they are the orchestra.
+## Поведение
 
-**You are the conductor.**
+- Мёртвые узлы отсекаются TCP-пробой за ~2 c, затем автоскан следующего узла.
+- Статус «В ЭФИРЕ» загорается только после первого отрисованного кадра.
+- Если поток обрывается — музыка затухает в тишину и оживает от новой картинки.
+- Кнопки ＋ и ⇪ добавляют свои камеры (mjpeg / rtsp), например выгрузку из Shodan.
 
----
+## Этика
 
-## How it works
+Приложение подключается только к камерам, которые транслируются публично.
+Никакого обхода авторизации. Мы слушаем то, что и так видно всему интернету.

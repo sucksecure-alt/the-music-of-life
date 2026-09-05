@@ -1,359 +1,583 @@
-"""
-main.py
-PANOPTICON SYMPHONY
-Они не знают, что играют.
-"""
+"""PANOPTICON SYMPHONY v1.1 — генеративный эмбиент из публичных видеопотоков."""
 
-import sys
-import json
-import time
-import threading
-import subprocess
-import os
-import cv2
+import sys, os, json, time, random, wave, socket, traceback
+import urllib.request
+from urllib.parse import urlparse
+import ssl
 import numpy as np
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QLabel, QPushButton, QComboBox, QSlider,
-    QGridLayout, QFrame, QFileDialog, QMessageBox
-)
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt5.QtGui import QImage, QPixmap, QFont, QPalette, QColor
+import cv2
 
-from video_analyzer import VideoAnalyzer
+_SSL = ssl.create_default_context()
+_SSL.check_hostname = False
+_SSL.verify_mode = ssl.CERT_NONE
+
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+    QHBoxLayout, QLabel, QPushButton, QComboBox, QSlider, QFrame,
+    QProgressBar, QSizePolicy, QFileDialog, QInputDialog)
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap, QColor, QPainter, QPen
+
+from video_analyzer import VideoAnalyzer, FrameData
 from music_generator import MusicGenerator
 
+LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "panopticon_crash.log")
 
-class CameraThread(QThread):
-    """Поток загрузки камеры."""
+def log(*a):
+    try:
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(time.ctime() + " " + " ".join(str(x) for x in a) + "\n")
+    except Exception:
+        pass
+
+def _excepthook(t, v, tb):
+    try:
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(time.ctime() + "\n")
+            traceback.print_exception(t, v, tb, file=f)
+    except Exception:
+        pass
+sys.excepthook = _excepthook
+
+
+class CameraWorker(QThread):
     frame_ready = pyqtSignal(np.ndarray)
-    status_update = pyqtSignal(str)
+    status_changed = pyqtSignal(str)
+    gave_up = pyqtSignal()
 
-    def __init__(self, url, camera_type="mjpeg"):
+    def __init__(self, url, max_tries=1, timeout=5):
         super().__init__()
         self.url = url
-        self.camera_type = camera_type
-        self.running = True
-        self.cap = None
-
-    def _get_youtube_hls(self, url):
-        """Извлечение HLS-потока из YouTube через yt-dlp."""
-        try:
-            result = subprocess.run(
-                ["yt-dlp", "-g", "--no-playlist", url],
-                capture_output=True, text=True, timeout=15
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip().split("\n")[0]
-        except Exception:
-            pass
-        return None
+        self.max_tries = max_tries
+        self.timeout = timeout
+        self._running = True
 
     def run(self):
-        stream_url = self.url
+        try:
+            if self.url.startswith("rtsp://"):
+                self._run_cv2()
+            else:
+                self._run_mjpeg()
+        except Exception as e:
+            log("node:", self.url, e)
+        if self._running:
+            self.gave_up.emit()
 
-        if self.camera_type == "youtube_hls":
-            self.status_update.emit("Resolving stream...")
-            stream_url = self._get_youtube_hls(self.url)
-            if not stream_url:
-                self.status_update.emit("Stream unavailable")
+    def _run_mjpeg(self):
+        for tr in range(self.max_tries):
+            if not self._running:
                 return
-
-        self.status_update.emit("Connecting...")
-        self.cap = cv2.VideoCapture(stream_url)
-
-        if not self.cap.isOpened():
-            self.status_update.emit("Connection failed")
-            return
-
-        self.status_update.emit("LIVE")
-        while self.running:
-            ret, frame = self.cap.read()
-            if not ret:
-                time.sleep(1)
-                self.cap.release()
-                self.cap = cv2.VideoCapture(stream_url)
+            self.status_changed.emit("ЧИТАЮ ПОТОК...")
+            try:
+                req = urllib.request.Request(self.url, headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
+                resp = urllib.request.urlopen(req, timeout=self.timeout, context=_SSL)
+            except Exception as e:
+                log("open:", self.url, e)
+                time.sleep(0.4)
                 continue
-            self.frame_ready.emit(frame)
-            time.sleep(0.033)  # ~30 FPS
+            buf = b""
+            last_data = time.time()
+            got_jpeg = False
+            while self._running:
+                try:
+                    chunk = resp.read(65536)
+                except (socket.timeout, TimeoutError, OSError):
+                    if time.time() - last_data > 8:
+                        break
+                    continue
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                last_data = time.time()
+                buf += chunk
+                while True:
+                    s = buf.find(b"\xff\xd8")
+                    if s == -1:
+                        buf = buf[-4:] if len(buf) > 4 else buf
+                        break
+                    e = buf.find(b"\xff\xd9", s)
+                    if e == -1:
+                        break
+                    jpg = buf[s:e + 2]
+                    buf = buf[e + 2:]
+                    frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        got_jpeg = True
+                        self.frame_ready.emit(frame)
+                if len(buf) > 16 * 1024 * 1024:
+                    buf = buf[-2 * 1024 * 1024:]
+                if got_jpeg and time.time() - last_data > 10:
+                    break
+            try:
+                resp.close()
+            except Exception:
+                pass
 
-        self.cap.release()
+    def _run_cv2(self):
+        self.status_changed.emit("ЧИТАЮ ПОТОК...")
+        try:
+            cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
+        except Exception:
+            return
+        if not cap.isOpened():
+            try: cap.release()
+            except Exception: pass
+            return
+        fail = 0
+        while self._running:
+            try:
+                ret, frame = cap.read()
+            except Exception:
+                break
+            if not ret:
+                fail += 1
+                if fail > 60:
+                    break
+                time.sleep(0.1)
+                continue
+            fail = 0
+            self.frame_ready.emit(frame)
+            time.sleep(0.03)
+        try: cap.release()
+        except Exception: pass
 
     def stop(self):
-        self.running = False
-        self.wait(2000)
+        self._running = False
+
+
+class WaveformWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.vals = [0.0] * 100
+        self.setMinimumHeight(50)
+        self.setMaximumHeight(60)
+
+    def push(self, v):
+        self.vals.append(max(0.0, min(1.0, v)))
+        if len(self.vals) > 100:
+            self.vals.pop(0)
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        p.fillRect(0, 0, w, h, QColor(13, 13, 13))
+        pen = QPen(QColor(255, 50, 50)); pen.setWidth(2); p.setPen(pen)
+        s = w / max(len(self.vals) - 1, 1); m = h / 2
+        for i in range(1, len(self.vals)):
+            p.drawLine(int((i-1)*s), int(m - self.vals[i-1]*m*0.9),
+                       int(i*s), int(m - self.vals[i]*m*0.9))
+        p.setPen(QPen(QColor(255, 50, 50, 60)))
+        for i in range(1, len(self.vals)):
+            p.drawLine(int((i-1)*s), int(m + self.vals[i-1]*m*0.5),
+                       int(i*s), int(m + self.vals[i]*m*0.5))
+        p.end()
 
 
 class PanopticonWindow(QMainWindow):
-    """Главное окно Паноптикума."""
+    FLAGS = {"JP":"\U0001f1ef\U0001f1f5","US":"\U0001f1fa\U0001f1f8","DE":"\U0001f1e9\U0001f1ea",
+             "FI":"\U0001f1eb\U0001f1ee","SE":"\U0001f1f8\U0001f1ea","NO":"\U0001f1f3\U0001f1f4",
+             "CH":"\U0001f1e8\U0001f1ed","CZ":"\U0001f1e8\U0001f1ff","NL":"\U0001f1f3\U0001f1f1",
+             "AT":"\U0001f1e6\U0001f1f9"}
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PANOPTICON SYMPHONY")
-        self.setMinimumSize(1100, 750)
-        self.setStyleSheet(self._dark_style())
-
+        self.setWindowTitle("ПАНОПТИКОН СИМФОНИЯ")
+        self.setMinimumSize(1200, 800)
+        self._closing = False
         self.cameras = []
-        self.camera_threads = []
-        self.analyzers = []
-        self.music_gen = MusicGenerator()
-        self.active_camera_idx = 0
-        self.is_recording = False
-        self.recorded_chunks = []
+        self.worker = None
+        self.graveyard = []
+        self.analyzer = VideoAnalyzer()
+        self.music = MusicGenerator()
+        self.current_data = FrameData()
+        self._origin = 0
+        self._attempt = 0
+        self._idx = 0
+        self._live_shown = False
+        self._fps = 0.0
+        self._res = ""
+        self._last_t = 0.0
 
-        self._load_cameras()
-        self._init_ui()
-        self._start_active_camera()
-
-    def _load_cameras(self):
-        """Загрузка базы камер."""
-        json_path = os.path.join(os.path.dirname(__file__), "camera_sources.json")
+        cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_sources.json")
         try:
-            with open(json_path, "r") as f:
-                data = json.load(f)
-            self.cameras = data.get("cameras", [])
+            with open(cfg, "r", encoding="utf-8") as fj:
+                self.cameras = json.load(fj).get("cameras", [])
         except Exception as e:
-            self.cameras = []
+            log("camera list:", e)
 
-    def _init_ui(self):
-        """Инициализация интерфейса."""
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(15, 15, 15, 15)
+        self._build_ui()
+        self._apply_style()
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(100)
+        if self.cameras:
+            self._connect(0)
 
-        # ── Заголовок ──
-        title = QLabel("◉ PANOPTICON SYMPHONY")
-        title.setFont(QFont("Courier New", 24, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #ff4444;")
-        layout.addWidget(title)
+    def _build_ui(self):
+        central = QWidget(); self.setCentralWidget(central)
+        root = QVBoxLayout(central); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
 
-        subtitle = QLabel("they do not know they are playing")
-        subtitle.setFont(QFont("Courier New", 10))
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("color: #666;")
-        layout.addWidget(subtitle)
+        top = QFrame(objectName="topBar"); top.setFixedHeight(50)
+        tl = QHBoxLayout(top); tl.setContentsMargins(20,0,20,0)
+        tl.addWidget(QLabel("◉ PANOPTICON SYMPHONY", objectName="logo"))
+        tl.addStretch()
+        self.node_label = QLabel("---", objectName="node")
+        tl.addWidget(self.node_label)
+        self.status_label = QLabel("ЗАПУСК...", objectName="status")
+        tl.addWidget(self.status_label)
+        root.addWidget(top)
 
-        # ── Видео-зона ──
-        video_frame = QFrame()
-        video_frame.setStyleSheet("""
-            QFrame {
-                background: #0a0a0a;
-                border: 1px solid #333;
-                border-radius: 4px;
-            }
-        """)
-        video_layout = QVBoxLayout(video_frame)
+        ct = QHBoxLayout(); ct.setContentsMargins(12,12,12,12); ct.setSpacing(12)
 
-        self.video_label = QLabel()
-        self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(640, 360)
-        self.video_label.setText("SIGNAL LOST")
-        self.video_label.setStyleSheet("color: #333; font-size: 18px; font-family: Courier;")
-        video_layout.addWidget(self.video_label)
+        vf = QFrame(objectName="videoContainer"); vl = QVBoxLayout(vf)
+        vl.setContentsMargins(2,2,2,2)
+        self.video_label = QLabel("НЕТ СИГНАЛА", objectName="videoFeed")
+        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_label.setMinimumSize(640, 400)
+        self.video_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        vl.addWidget(self.video_label)
+        self.desc_label = QLabel("", objectName="description")
+        self.desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.desc_label.setWordWrap(True)
+        vl.addWidget(self.desc_label)
+        ct.addWidget(vf, stretch=3)
 
-        layout.addWidget(video_frame)
+        rp = QVBoxLayout(); rp.setSpacing(10)
 
-        # ── Панель параметров ──
-        params_frame = QFrame()
-        params_frame.setStyleSheet("QFrame { background: #111; border-radius: 4px; }")
-        params_layout = QHBoxLayout(params_frame)
-
-        # Параметры музыки (обновляются в реальном времени)
-        self.param_labels = {}
-        param_names = [
-            ("movement", "MOVEMENT"),
-            ("brightness", "LIGHT"),
-            ("color", "SPECTRUM"),
-            ("complexity", "DENSITY"),
-            ("mood", "MOOD"),
-        ]
-        for key, label_text in param_names:
-            lbl = QLabel(f"{label_text}\n---")
-            lbl.setFont(QFont("Courier New", 9))
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet("color: #0f0; padding: 5px;")
-            params_layout.addWidget(lbl)
-            self.param_labels[key] = lbl
-
-        layout.addWidget(params_frame)
-
-        # ── Кнопки управления ──
-        controls = QHBoxLayout()
-
-        self.camera_selector = QComboBox()
+        sf = QFrame(objectName="panel"); sl = QVBoxLayout(sf)
+        sl.addWidget(QLabel("ВЫБОР УЗЛА", objectName="panelTitle"))
+        self.cc = QComboBox()
         for cam in self.cameras:
-            self.camera_selector.addItem(f"📹 {cam['city']} — {cam['name']}")
-        self.camera_selector.currentIndexChanged.connect(self._on_camera_change)
-        self.camera_selector.setStyleSheet("QComboBox { background: #1a1a1a; color: #fff; padding: 5px; }")
-        controls.addWidget(self.camera_selector)
+            fl = self.FLAGS.get(cam.get("country",""), "\U0001f4f9")
+            self.cc.addItem(f"{fl} {cam['city']} — {cam['name']}")
+        self.cc.currentIndexChanged.connect(self._on_cam)
+        sl.addWidget(self.cc)
+        br = QHBoxLayout()
+        b1 = QPushButton("\U0001f3b2 СЛУЧАЙНО"); b1.clicked.connect(self._random); br.addWidget(b1)
+        b2 = QPushButton("▶ ДАЛЕЕ"); b2.clicked.connect(self._next); br.addWidget(b2)
+        sl.addLayout(br)
+        br2 = QHBoxLayout()
+        b3 = QPushButton("＋ ДОБАВИТЬ"); b3.clicked.connect(self._add_cam); br2.addWidget(b3)
+        b4 = QPushButton("⇪ ИМПОРТ СПИСКА"); b4.clicked.connect(self._import_cams); br2.addWidget(b4)
+        sl.addLayout(br2)
+        rp.addWidget(sf)
 
-        btn_random = QPushButton("🎲 RANDOM")
-        btn_random.clicked.connect(self._random_camera)
-        controls.addWidget(btn_random)
+        pf = QFrame(objectName="panel"); pl = QVBoxLayout(pf)
+        pl.addWidget(QLabel("АНАЛИЗ СИГНАЛА", objectName="panelTitle"))
+        self.pw = {}
+        for k, lb, co in [("movement","ДВИЖЕНИЕ","#ff5050"),("brightness","СВЕТ","#ffdc64"),
+                          ("complexity","ПЛОТНОСТЬ","#64c8ff"),("color","СПЕКТР","#b4ffb4")]:
+            row = QHBoxLayout()
+            nl = QLabel(lb, objectName="paramName"); nl.setFixedWidth(90); row.addWidget(nl)
+            bar = QProgressBar(); bar.setRange(0,100); bar.setValue(0)
+            bar.setTextVisible(False); bar.setFixedHeight(14)
+            bar.setStyleSheet(f"QProgressBar{{background:#1a1a1a;border:1px solid #333;border-radius:3px;}}"
+                              f"QProgressBar::chunk{{background:{co};border-radius:2px;}}")
+            row.addWidget(bar)
+            vv = QLabel("0.00", objectName="paramVal"); vv.setFixedWidth(45)
+            vv.setAlignment(Qt.AlignmentFlag.AlignRight); row.addWidget(vv)
+            pl.addLayout(row); self.pw[k] = (bar, vv)
+        self.ml = QLabel("НАСТРОЕНИЕ: ---", objectName="mood")
+        self.ml.setAlignment(Qt.AlignmentFlag.AlignCenter); pl.addWidget(self.ml)
+        self.scl = QLabel("ЛАД: ---", objectName="scale")
+        self.scl.setAlignment(Qt.AlignmentFlag.AlignCenter); pl.addWidget(self.scl)
+        rp.addWidget(pf)
 
-        btn_mute = QPushButton("🔇 SILENCE")
-        btn_mute.setCheckable(True)
-        btn_mute.clicked.connect(self._toggle_mute)
-        controls.addWidget(btn_mute)
+        wf = QFrame(objectName="panel"); wl = QVBoxLayout(wf)
+        wl.addWidget(QLabel("ВОЛНА", objectName="panelTitle"))
+        self.wv = WaveformWidget(); wl.addWidget(self.wv); rp.addWidget(wf)
 
-        btn_record = QPushButton("⏺ RECORD")
-        btn_record.setCheckable(True)
-        btn_record.clicked.connect(self._toggle_record)
-        controls.addWidget(btn_record)
+        vlf = QFrame(objectName="panel"); vll = QVBoxLayout(vlf)
+        vll.addWidget(QLabel("ГРОМКОСТЬ", objectName="panelTitle"))
+        self.vs = QSlider(Qt.Orientation.Horizontal); self.vs.setRange(0,100); self.vs.setValue(85)
+        self.vs.valueChanged.connect(lambda v: self.music.set_volume(v/100.0))
+        vll.addWidget(self.vs); rp.addWidget(vlf)
 
-        btn_next = QPushButton("▶ NEXT SOUL")
-        btn_next.clicked.connect(self._next_camera)
-        controls.addWidget(btn_next)
+        af = QFrame(objectName="panel"); al = QVBoxLayout(af); abr = QHBoxLayout()
+        self.bm = QPushButton("\U0001f50a ЗВУК ВКЛ"); self.bm.setCheckable(True)
+        self.bm.clicked.connect(self._mute); abr.addWidget(self.bm)
+        self.brec = QPushButton("⏺ ЗАПИСЬ"); self.brec.setCheckable(True)
+        self.brec.clicked.connect(self._rec); abr.addWidget(self.brec)
+        al.addLayout(abr); rp.addWidget(af); rp.addStretch()
 
-        layout.addLayout(controls)
+        rw = QWidget(); rw.setLayout(rp); rw.setFixedWidth(340); ct.addWidget(rw)
+        root.addLayout(ct)
 
-        # ── Статусная строка ──
-        self.status_label = QLabel("INITIALIZING PANOPTICON...")
-        self.status_label.setFont(QFont("Courier New", 8))
-        self.status_label.setStyleSheet("color: #555;")
-        layout.addWidget(self.status_label)
+        bot = QFrame(objectName="bottomBar"); bot.setFixedHeight(30)
+        bl = QHBoxLayout(bot); bl.setContentsMargins(20,0,20,0)
+        self.bt = QLabel("panopticon symphony v1.1 · генеративный эмбиент из публичных видеопотоков",
+                         objectName="bottomText")
+        bl.addWidget(self.bt); bl.addStretch()
+        bl.addWidget(QLabel(f"узлов в базе: {len(self.cameras)}", objectName="bottomText"))
+        root.addWidget(bot)
 
-        # ── Таймер обновления параметров ──
-        self.ui_timer = QTimer()
-        self.ui_timer.timeout.connect(self._update_params_display)
-        self.ui_timer.start(200)
+    def _apply_style(self):
+        self.setStyleSheet(
+            "QMainWindow{background:#0a0a0a;}"
+            "QWidget{color:#ccc;font-family:Menlo;}"
+            "#topBar{background:#111;border-bottom:1px solid #222;}"
+            "#logo{color:#ff3333;font-size:16px;font-weight:bold;}"
+            "#status{color:#0f0;font-size:11px;}"
+            "#node{color:#666;font-size:10px;padding-right:14px;}"
+            "#videoContainer{background:#000;border:1px solid #1a1a1a;border-radius:6px;}"
+            "#videoFeed{color:#333;font-size:24px;font-weight:bold;}"
+            "#description{color:#555;font-size:10px;padding:4px;}"
+            "#panel{background:#111;border:1px solid #1a1a1a;border-radius:6px;padding:8px;}"
+            "#panelTitle{color:#ff3333;font-size:9px;font-weight:bold;letter-spacing:3px;}"
+            "#paramName{color:#888;font-size:10px;}#paramVal{color:#fff;font-size:10px;}"
+            "#mood{color:#ff9944;font-size:11px;padding-top:6px;}#scale{color:#888;font-size:9px;}"
+            "QComboBox{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:4px;padding:6px;font-size:11px;}"
+            "QComboBox::drop-down{border:none;}"
+            "QComboBox QAbstractItemView{background:#1a1a1a;color:#ccc;selection-background-color:#333;}"
+            "QPushButton{background:#1a1a1a;color:#ff4444;border:1px solid #333;border-radius:4px;padding:8px 12px;font-size:11px;font-weight:bold;}"
+            "QPushButton:hover{background:#252525;border-color:#ff4444;}"
+            "QPushButton:checked{background:#ff4444;color:#000;}"
+            "QSlider::groove:horizontal{height:6px;background:#1a1a1a;border-radius:3px;}"
+            "QSlider::handle:horizontal{width:14px;height:14px;margin:-4px 0;background:#ff4444;border-radius:7px;}"
+            "QSlider::sub-page:horizontal{background:#ff4444;border-radius:3px;}"
+            "#bottomBar{background:#0d0d0d;border-top:1px solid #1a1a1a;}"
+            "#bottomText{color:#444;font-size:9px;}")
 
-    def _start_active_camera(self):
-        """Запуск активной камеры."""
-        # Остановка старых потоков
-        for t in self.camera_threads:
-            t.stop()
+    # ── камеры ──
+    def _kill_worker(self):
+        if self.worker is not None:
+            self.worker._running = False
+            self.graveyard.append(self.worker)
+            self.worker = None
 
-        if not self.cameras:
-            self.status_label.setText("NO CAMERAS FOUND")
+    def _connect(self, idx, tries=1):
+        try:
+            self._kill_worker()
+            if not self.cameras or idx < 0 or idx >= len(self.cameras):
+                return
+            self._idx = idx
+            self._live_shown = False
+            self._fps = 0.0
+            self._res = ""
+            cam = self.cameras[idx]
+            self.analyzer.reset()
+            host = urlparse(cam["url"]).hostname or ""
+            self.desc_label.setText(f"{cam.get('description','')} · {host}")
+            self.video_label.clear()
+            self.video_label.setText("ПОИСК СИГНАЛА...")
+            self.status_label.setText("ПОДКЛЮЧЕНИЕ...")
+            self.status_label.setStyleSheet("color:#ff9900;")
+            self.worker = CameraWorker(cam["url"], max_tries=tries)
+            self.worker.frame_ready.connect(self._on_frame)
+            self.worker.status_changed.connect(self._on_status)
+            self.worker.gave_up.connect(self._on_gave_up)
+            self.worker.start()
+        except Exception as e:
+            log("connect:", e)
+
+    def _on_cam(self, idx):
+        if 0 <= idx < len(self.cameras):
+            self._origin = idx
+            self._attempt = 1
+            self._connect(idx, tries=2)
+
+    def _on_gave_up(self):
+        try:
+            if self._closing or self.sender() is not self.worker:
+                return
+            n = len(self.cameras)
+            if n == 0:
+                self._all_dead(); return
+            if self._attempt < n:
+                idx = (self._origin + self._attempt) % n
+                self._attempt += 1
+                self.cc.blockSignals(True)
+                self.cc.setCurrentIndex(idx)
+                self.cc.blockSignals(False)
+                self._connect(idx, tries=1)
+            else:
+                self._all_dead()
+        except Exception as e:
+            log("gave_up:", e)
+
+    def _all_dead(self):
+        self.status_label.setText("ВСЕ УЗЛЫ НЕДОСТУПНЫ")
+        self.status_label.setStyleSheet("color:#ff0000;")
+        self.video_label.setText("СЕТЬ НЕ ПУСКАЕТ")
+        self.desc_label.setText("ни один узел не ответил. 1) переключи vpn (вкл/выкл) и нажми ДАЛЕЕ. "
+                                "2) запусти python3 netcheck.py в терминале — он покажет живые узлы. "
+                                "3) добавь свои камеры (＋ / ⇪), например выгрузку из camover.")
+
+    def _add_cam(self):
+        url, ok = QInputDialog.getText(self, "ДОБАВИТЬ УЗЕЛ",
+            "URL потока (mjpeg / rtsp):", text="http://")
+        if ok and url.strip() and url.strip() != "http://":
+            self.cameras.append({"city": "CUSTOM", "name": f"узел {len(self.cameras)+1}",
+                                 "url": url.strip(), "country": "??",
+                                 "description": "пользовательский узел"})
+            self.cc.blockSignals(True)
+            self.cc.addItem(f"\U0001f4f9 CUSTOM — узел {len(self.cameras)}")
+            self.cc.setCurrentIndex(len(self.cameras) - 1)
+            self.cc.blockSignals(False)
+            self._origin = len(self.cameras) - 1
+            self._attempt = 1
+            self._connect(self._origin, tries=2)
+
+    def _import_cams(self):
+        path, _ = QFileDialog.getOpenFileName(self, "ИМПОРТ СПИСКА КАМЕР", "",
+                                              "Text (*.txt *.json);;All (*)")
+        if not path:
             return
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            added = 0
+            if path.endswith(".json"):
+                for c in json.loads(content).get("cameras", []):
+                    if c.get("url"):
+                        self.cameras.append(c)
+                        self.cc.addItem(f"\U0001f4f9 {c.get('city','?')} — {c.get('name','?')}")
+                        added += 1
+            else:
+                for line in content.splitlines():
+                    u = line.strip()
+                    if u.startswith(("http://", "https://", "rtsp://")):
+                        self.cameras.append({"city": "IMPORT", "name": f"узел {len(self.cameras)+1}",
+                                             "url": u, "country": "??", "description": "импортированный узел"})
+                        self.cc.addItem(f"\U0001f4f9 IMPORT — узел {len(self.cameras)}")
+                        added += 1
+            self.bt.setText(f"импортировано узлов: {added}")
+        except Exception as e:
+            self.bt.setText(f"ошибка импорта: {e}")
 
-        cam = self.cameras[self.active_camera_idx]
-        analyzer = VideoAnalyzer()
-        self.analyzers = [analyzer]
+    def _random(self):
+        if self.cameras:
+            self.cc.setCurrentIndex(random.randint(0, len(self.cameras)-1))
 
-        thread = CameraThread(cam["url"], cam.get("type", "mjpeg"))
-        thread.frame_ready.connect(self._on_frame)
-        thread.status_update.connect(self._on_status)
-        thread.start()
-        self.camera_threads = [thread]
+    def _next(self):
+        if self.cameras:
+            self.cc.setCurrentIndex((self.cc.currentIndex()+1) % len(self.cameras))
 
-        self.status_label.setText(f"CONNECTED: {cam['city']} / {cam['name']}")
-
+    # ── кадры ──
     def _on_frame(self, frame):
-        """Обработка кадра."""
-        # Отображение видео
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb.shape
-        bytes_per_line = ch * w
-        qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        scaled = qimg.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.video_label.setPixmap(QPixmap.fromImage(scaled))
+        try:
+            if self._closing or self.sender() is not self.worker:
+                return
+            now = time.time()
+            if self._last_t > 0:
+                dt = now - self._last_t
+                if dt > 0:
+                    self._fps = 0.9 * self._fps + 0.1 * (1.0 / dt)
+            self._last_t = now
 
-        # Анализ → музыка
-        if self.analyzers:
-            data = self.analyzers[0].analyze(frame)
-            self.music_gen.update_data(data)
-            self._current_data = data
+            d = self.analyzer.analyze(frame)
+            self.current_data = d
+            self.music.update(d)
+
+            h, w, _ = frame.shape
+            self._res = f"{w}×{h}"
+            if not self._live_shown:
+                self._live_shown = True
+                self.status_label.setText("◉ В ЭФИРЕ")
+                self.status_label.setStyleSheet("color:#00ff00;")
+
+            rgb = np.ascontiguousarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            qimg = QImage(rgb.data, w, h, w*3, QImage.Format.Format_RGB888).copy()
+            self.video_label.setPixmap(QPixmap.fromImage(
+                qimg.scaled(self.video_label.size(),
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation)))
+        except Exception as e:
+            log("frame:", e)
 
     def _on_status(self, msg):
-        self.status_label.setText(msg)
+        try:
+            self.status_label.setText(msg)
+            if "НЕДОСТУПНЫ" in msg:
+                self.status_label.setStyleSheet("color:#ff0000;")
+            else:
+                self.status_label.setStyleSheet("color:#ff9900;")
+        except Exception:
+            pass
 
-    def _on_camera_change(self, index):
-        self.active_camera_idx = index
-        self._start_active_camera()
+    # ── кнопки ─
+    def _mute(self):
+        m = self.bm.isChecked()
+        self.music.set_muted(m)
+        self.bm.setText("\U0001f507 ТИШИНА" if m else "\U0001f50a ЗВУК ВКЛ")
 
-    def _random_camera(self):
-        import random
-        idx = random.randint(0, len(self.cameras) - 1)
-        self.camera_selector.setCurrentIndex(idx)
-
-    def _next_camera(self):
-        idx = (self.active_camera_idx + 1) % len(self.cameras)
-        self.camera_selector.setCurrentIndex(idx)
-
-    def _toggle_mute(self):
-        if self.music_gen.running:
-            self.music_gen.stop()
+    def _rec(self):
+        if self.brec.isChecked():
+            self.music.set_recording(True)
+            self.brec.setText("⏹ СТОП")
+            self.bt.setText("идёт запись симфонии...")
+            self.bt.setStyleSheet("color:#ff4444;")
         else:
-            self.music_gen = MusicGenerator()
-            if hasattr(self, '_current_data'):
-                self.music_gen.update_data(self._current_data)
+            self.music.set_recording(False)
+            self.brec.setText("⏺ ЗАПИСЬ")
+            self.bt.setText("panopticon symphony v1.1 · генеративный эмбиент из публичных видеопотоков")
+            self.bt.setStyleSheet("color:#444;")
+            arr = self.music.fetch_recording()
+            if arr is not None and len(arr) > 0:
+                path, _ = QFileDialog.getSaveFileName(self, "Сохранить симфонию",
+                                                      "panopticon.wav", "WAV (*.wav)")
+                if path:
+                    try:
+                        d16 = (np.clip(arr, -1, 1) * 32767).astype(np.int16)
+                        with wave.open(path, "wb") as wf:
+                            wf.setnchannels(2); wf.setsampwidth(2); wf.setframerate(44100)
+                            wf.writeframes(d16.tobytes())
+                        self.bt.setText(f"сохранено: {os.path.basename(path)}")
+                    except Exception as e:
+                        self.bt.setText(f"ошибка записи: {e}")
 
-    def _toggle_record(self):
-        self.is_recording = not self.is_recording
-        if self.is_recording:
-            self.recorded_chunks = []
-            self.status_label.setText("RECORDING THE SYMPHONY...")
-        else:
-            self._save_recording()
+    # ── тик ──
+    def _tick(self):
+        try:
+            self.graveyard = [w for w in self.graveyard if w.isRunning()]
+            n = len(self.cameras)
+            if self._live_shown:
+                self.node_label.setText(f"УЗЕЛ {self._idx+1}/{n} · {self._res} · {self._fps:.0f} FPS")
+            else:
+                self.node_label.setText(f"УЗЕЛ {self._idx+1}/{n}")
+            d = self.current_data
+            for k, a in [("movement", d.movement), ("brightness", d.brightness), ("complexity", d.complexity)]:
+                if k in self.pw:
+                    self.pw[k][0].setValue(int(a*100)); self.pw[k][1].setText(f"{a:.2f}")
+            if "color" in self.pw:
+                r, g, b = d.color_rgb
+                self.pw["color"][0].setValue(int((r+g+b)/3*100))
+                self.pw["color"][1].setText({"warm":"тёпл","cool":"хол","nature":"прир","neutral":"нейт"}.get(d.dominant_color,"нейт"))
+            if d.sudden_change: mood = "⚡ СБОЙ"
+            elif d.is_night: mood = "\U0001f319 НОКТЮРН"
+            elif d.movement > 0.3: mood = "\U0001f525 ПУЛЬС"
+            elif d.movement < 0.05: mood = "\U0001f9ca ПОКОЙ"
+            else: mood = "\U0001f30a ПОТОК"
+            self.ml.setText(f"НАСТРОЕНИЕ: {mood}")
+            sn = {"warm":"ПЕНТАТОНИКА МАЖ","cool":"ПЕНТАТОНИКА МИН","nature":"ДОРИЙСКИЙ","neutral":"ИОНИЙСКИЙ"}
+            sc = sn.get(d.dominant_color, "ИОНИЙСКИЙ")
+            if d.is_night: sc = "ЛОКРИЙСКИЙ"
+            self.scl.setText(f"ЛАД: {sc}")
+            self.wv.push(d.movement*2 + d.brightness*0.3)
+        except Exception as e:
+            log("tick:", e)
 
-    def _save_recording(self):
-        """Сохранение записи как WAV."""
-        path, _ = QFileDialog.getSaveFileName(self, "Save Symphony", "panopticon.wav", "WAV (*.wav)")
-        if path and self.recorded_chunks:
-            import soundfile as sf
-            audio = np.concatenate(self.recorded_chunks)
-            sf.write(path, audio, self.music_gen.sample_rate)
-            self.status_label.setText(f"SAVED: {path}")
-
-    def _update_params_display(self):
-        """Обновление панели параметров."""
-        data = getattr(self, '_current_data', None)
-        if not data:
-            return
-
-        colors = {"red": "🔴", "green": "🟢", "blue": "🔵", "neutral": "⚪"}
-        mood = "DARK" if data.is_night else "LIGHT"
-        if data.sudden_change:
-            mood = "⚡ SHOCK"
-
-        self.param_labels["movement"].setText(f"MOVEMENT\n{'█' * int(data.movement * 10)}{'░' * (10 - int(data.movement * 10))}")
-        self.param_labels["brightness"].setText(f"LIGHT\n{data.brightness:.2f}")
-        self.param_labels["color"].setText(f"SPECTRUM\n{colors.get(data.dominant_color, '⚪')} {data.dominant_color.upper()}")
-        self.param_labels["complexity"].setText(f"DENSITY\n{data.complexity:.3f}")
-        self.param_labels["mood"].setText(f"MOOD\n{mood}")
-
-    def _dark_style(self):
-        return """
-            QMainWindow { background: #0d0d0d; }
-            QWidget { background: #0d0d0d; color: #ccc; }
-            QPushButton {
-                background: #1a1a1a;
-                color: #ff4444;
-                border: 1px solid #333;
-                padding: 8px 16px;
-                font-family: Courier New;
-                font-size: 11px;
-                border-radius: 3px;
-            }
-            QPushButton:hover { background: #2a2a2a; border-color: #ff4444; }
-            QPushButton:checked { background: #ff4444; color: #000; }
-            QComboBox {
-                background: #1a1a1a;
-                color: #ccc;
-                border: 1px solid #333;
-                padding: 5px;
-                font-family: Courier New;
-            }
-        """
-
-    def closeEvent(self, event):
-        for t in self.camera_threads:
-            t.stop()
-        self.music_gen.stop()
-        event.accept()
-
-
-def main():
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    window = PanopticonWindow()
-    window.show()
-    sys.exit(app.exec_())
+    def closeEvent(self, e):
+        self._closing = True
+        try:
+            self.timer.stop()
+            self._kill_worker()
+            for w in self.graveyard:
+                w.wait(1000)
+            self.music.stop()
+        except Exception:
+            pass
+        e.accept()
 
 
 if __name__ == "__main__":
-    main()
+    app = QApplication(sys.argv)
+    app.setApplicationName("Паноптикон Симфония")
+    w = PanopticonWindow()
+    w.show()
+    sys.exit(app.exec())
