@@ -1,0 +1,75 @@
+{
+  "manifest": "THEY DO NOT KNOW THEY ARE PLAYING",
+  "version": "1.0.0",
+  "cameras": [
+    {
+      "id": "tokyo_shibuya",
+      "city": "Tokyo",
+      "name": "Shibuya Crossing",
+      "url": "https://www.youtube.com/watch?v=kV2cCqkGwL4",
+      "type": "youtube_hls",
+      "country": "JP",
+      "timezone": "Asia/Tokyo"
+    },
+    {
+      "id": "nyc_times_square",
+      "city": "New York",
+      "name": "Times Square",
+      "url": "https://www.youtube.com/watch?v=rnXIjl_Rzy4",
+      "type": "youtube_hls",
+      "country": "US",
+      "timezone": "America/New_York"
+    },
+    {
+      "id": "london_piccadilly",
+      "city": "London",
+      "name": "Piccadilly Circus",
+      "url": "https://www.youtube.com/watch?v=4nMzOF3d9pw",
+      "type": "youtube_hls",
+      "country": "GB",
+      "timezone": "Europe/London"
+    },
+    {
+      "id": "venice_rialto",
+      "city": "Venice",
+      "name": "Rialto Bridge",
+      "url": "https://www.youtube.com/watch?v=FqKGmBi7mLw",
+      "type": "youtube_hls",
+      "country": "IT",
+      "timezone": "Europe/Rome"
+    },
+    {
+      "id": "moscow_tverskaya",
+      "city": "Moscow",
+      "name": "Tverskaya Street",
+      "url": "https://www.youtube.com/watch?v=YOUR_STREAM_ID",
+      "type": "youtube_hls",
+      "country": "RU",
+      "timezone": "Europe/Moscow"
+    },
+    {
+      "id": "open_mjpeg_1",
+      "city": "Unknown",
+      "name": "Node 0x1F",
+      "url": "http://86.119.172.9:8080/mjpg/video.mjpg",
+      "type": "mjpeg",
+      "country": "??",
+      "timezone": "UTC"
+    },
+    {
+      "id": "open_mjpeg_2",
+      "city": "Unknown",
+      "name": "Node 0x2A",
+      "url": "http://155.4.149.130:8080/mjpg/video.mjpg",
+      "type": "mjpeg",
+      "country": "??",
+      "timezone": "UTC"
+    }
+  ],
+  "discovery": {
+    "windy_api": "https://www.windy.com/webcams/api/v1.1/webcams?limit=50&offset=0&include=images",
+    "skyline": "https://www.skylinewebcams.com/en/webcam/{country}.html",
+    "shodan_query": "port:80,554,8080 has_screenshot:true -authentication",
+    "note": "ADD ONLY PUBLICLY BROADCASTING CAMERAS. NO AUTH BYPASS."
+  }
+}
